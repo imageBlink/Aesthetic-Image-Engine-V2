@@ -3326,7 +3326,7 @@ document.addEventListener('DOMContentLoaded',()=>{
           <pre id="appsScriptCode" style="background:#1A1A1A;color:#a8f0b8;font-family:'DM Mono',monospace;font-size:11px;padding:14px 16px;border-radius:10px;overflow-x:auto;line-height:1.6;margin:0;white-space:pre-wrap">function doPost(e) {
   try {
     var ss    = SpreadsheetApp.getActiveSpreadsheet();
-    var sheet = ss.getSheetByName('IMAGE INTELLIGENCE · Database');
+    var sheet = ss.getSheetByName('🗄 Client Database');
     if (!sheet) sheet = ss.getSheets()[0];
     var data  = JSON.parse(e.postData.contents);
     sheet.appendRow(data.values);
@@ -3336,7 +3336,7 @@ document.addEventListener('DOMContentLoaded',()=>{
   }
 }
 function doGet(e) {
-  return ContentService.createTextOutput(JSON.stringify({status:'ready'})).setMimeType(ContentService.MimeType.JSON);
+  return ContentService.createTextOutput(JSON.stringify({status:'ready', sheet:'🗄 Client Database'})).setMimeType(ContentService.MimeType.JSON);
 }</pre>
           <button onclick="(()=>{navigator.clipboard.writeText(document.getElementById('appsScriptCode').textContent).then(()=>{const b=event.target;b.textContent='✓ Copied!';setTimeout(()=>b.textContent='Copy',1500);})})()" style="position:absolute;top:8px;right:8px;background:rgba(196,162,74,.2);border:1px solid rgba(196,162,74,.4);color:#C4A24A;font-size:10px;padding:4px 10px;border-radius:6px;cursor:pointer;font-family:'DM Mono',monospace">Copy</button>
         </div>
