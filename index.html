@@ -2026,198 +2026,278 @@ const FACE_SHAPE_CURVE_MAP = {
 //   Oval:      FW/CW 0.78–0.892, JW/CW 0.64–0.80   (F: 113/135=0.837)
 // ════════════════════════════════════════════════════════════════════
 function calcFaceAutoDetect() {
-  const fl = parseFloat(document.getElementById('f_fl')?.value) || 0;
-  const cw = parseFloat(document.getElementById('f_cw')?.value) || 0;
-  const fw = parseFloat(document.getElementById('f_fw')?.value) || 0;
-  const jw = parseFloat(document.getElementById('f_jw')?.value) || 0;
-  const u  = parseFloat(document.getElementById('f_u')?.value)  || 0;
-  const m  = parseFloat(document.getElementById('f_m')?.value)  || 0;
-  const l  = parseFloat(document.getElementById('f_l')?.value)  || 0;
+  const fl  = parseFloat(document.getElementById('f_fl')?.value)  || 0;
+  const cw  = parseFloat(document.getElementById('f_cw')?.value)  || 0;
+  const fw  = parseFloat(document.getElementById('f_fw')?.value)  || 0;
+  const jw  = parseFloat(document.getElementById('f_jw')?.value)  || 0;
+  const tw  = parseFloat(document.getElementById('f_tw')?.value)  || 0;
+  const chw = parseFloat(document.getElementById('f_chw')?.value) || 0;
+  const u   = parseFloat(document.getElementById('f_u')?.value)   || 0;
+  const m   = parseFloat(document.getElementById('f_m')?.value)   || 0;
+  const l   = parseFloat(document.getElementById('f_l')?.value)   || 0;
 
   const panel = document.getElementById('faceAutoResult');
   if (!fl || !cw) { panel.classList.remove('show'); return; }
 
-  const ratio = fl / cw;
+  const ratio     = fl / cw;
+  const hasFW     = fw > 0;
+  const hasJW     = jw > 0;
   const goldenScore = Math.max(0, 100 - Math.abs(ratio - 1.5) * 200).toFixed(0);
-  const hasFW = fw > 0, hasJW = jw > 0;
-  const fwR = hasFW ? fw / cw : null;
-  const jwR = hasJW ? jw / cw : null;
 
-  const between = (v,lo,hi) => v!==null && v>=lo && v<=hi;
-  const above   = (v,t)     => v!==null && v>t;
-  const below   = (v,t)     => v!==null && v<t;
-  const simRatio= (a,b)     => a!==null && b!==null && Math.abs(a-b)/(Math.max(a,b)) < 0.05;
-
-  const scores = {
-    oval:0, round:0, square:0, heart:0, inverted_triangle:0, oblong:0,
-    diamond:0, triangle:0, pear:0, rectangle:0
-  };
-  // Cache jaw type for Heart vs InvTri disambiguation
   const _jawEl = document.querySelector('#jawType .toggle-btn.active');
   window._lastJawType = _jawEl ? _jawEl.dataset.val : '';
-  const hasTW = (parseFloat(document.getElementById('f_tw')?.value) || 0) > 0;
+  const jawSoft    = window._lastJawType === 'soft_curved';
+  const jawAngular = window._lastJawType === 'angular' || window._lastJawType === 'sharp';
 
-  // ── A: PEAR — JW/CW > 0.90, FW/CW < 0.55 ────────────────────────────
-  if (above(jwR, 0.90)) {
-    if (hasFW && below(fwR, 0.55))              scores.pear     += 95;
-    else if (hasFW && between(fwR, 0.55, 0.70)) scores.triangle += 90;
-    else if (hasFW && between(fwR, 0.70, 0.80)) scores.triangle += 50;
-    else if (!hasFW)                            { scores.triangle += 50; scores.pear += 30; }
-  } else if (above(jwR, 0.80) && hasFW) {
-    if (below(fwR, 0.55))                       scores.pear     += 65;
-    else if (between(fwR, 0.55, 0.70))          scores.triangle += 70;
+  // ── Determine widest part ─────────────────────────────────────────
+  // Build a comparable list of whichever widths we have
+  const widthMap = { cw };
+  if (hasFW) widthMap.fw = fw;
+  if (hasJW) widthMap.jw = jw;
+  const widths   = Object.entries(widthMap).sort((a, b) => b[1] - a[1]);
+  const widestPart = widths[0][0];   // 'cw', 'fw', or 'jw'
+
+  // ── Ratios (null-safe) ────────────────────────────────────────────
+  const fwR  = hasFW ? fw / cw : null;
+  const jwR  = hasJW ? jw / cw : null;
+
+  // ── Score object ──────────────────────────────────────────────────
+  const score = {
+    oval: 0, oblong: 0, round: 0, square: 0,
+    diamond: 0, heart: 0, inverted_triangle: 0,
+    triangle: 0, pear: 0, rectangle: 0
+  };
+
+  // ════════════════════════════════════════════════════════════════════
+  // STEP 1 — Widest-part gate (major prior)
+  // ════════════════════════════════════════════════════════════════════
+  if (widestPart === 'cw') {
+    // Cheekbone is widest → Oval and Diamond territory
+    score.oval    += 30;
+    score.diamond += 20;
+    score.oblong  += 10;  // oblong can also be CW-widest
+    // Hard suppress jaw-dominant shapes
+    score.triangle -= 15;
+    score.pear     -= 15;
+    score.square   -= 5;
+  } else if (widestPart === 'jw') {
+    // Jaw is widest → Triangle / Square / Pear
+    score.triangle += 25;
+    score.square   += 15;
+    score.pear     += 20;
+    // Suppress cheekbone-dominant shapes
+    score.oval     -= 10;
+    score.diamond  -= 10;
+  } else if (widestPart === 'fw') {
+    // Forehead is widest → Heart / Inverted Triangle
+    score.heart              += 25;
+    score.inverted_triangle  += 20;
+    score.oval               -= 5;
+    score.triangle           -= 15;
   }
 
-  // ── B: HEART vs INVERTED TRIANGLE — FW ≥ CW, JW narrow ─────────────
-  // KEY FIX: Heart/InvTri = FW ≥ CW (forehead AT LEAST as wide as cheekbone)
-  // Diamond = CW > FW (cheekbone WIDER than forehead — separated below)
-  // Heart vs InvTri distinguished by jawType (curved vs angular)
-  const jawTypeVal = hasTW ? (window._lastJawType || '') : '';
-  if (above(fwR, 0.92) && below(jwR, 0.76)) {
-    const isAngular = jawTypeVal === 'angular' || jawTypeVal === 'sharp';
-    if (isAngular) {
-      scores.inverted_triangle += 90;
-      scores.heart += 30;   // secondary possibility
-    } else {
-      scores.heart += 90;
-      scores.inverted_triangle += 35; // secondary if jaw is angular
-    }
-  } else if (above(fwR, 0.88) && below(jwR, 0.80)) {
-    scores.heart += 65;
-    scores.inverted_triangle += 25;
-  } else if (above(fwR, 0.92) && !hasJW) {
-    scores.heart += 55;
+  // ════════════════════════════════════════════════════════════════════
+  // STEP 2 — Length filter (FL/CW ratio)
+  // ════════════════════════════════════════════════════════════════════
+  if (ratio > 1.55) {
+    score.oblong    += 30;
+    score.rectangle += 15;
+    score.oval      += 8;
+    score.round     -= 20;
+    score.triangle  -= 20;  // triangle is a wide/short shape
+    score.pear      -= 10;
+  } else if (ratio > 1.50) {
+    score.oblong    += 15;
+    score.rectangle += 8;
+    score.round     -= 10;
+    score.triangle  -= 10;
+  } else if (ratio < 1.22) {
+    score.round  += 20;
+    score.square += 10;
+    score.oblong -= 15;
   }
 
-  // ── C: DIAMOND — CW is widest: CW > FW AND CW > JW ──────────────────
-  // THE KEY FIX: Diamond is defined by CW being the absolute widest point
-  // FW/CW range is now WIDE (0.60–0.92) — NOT just 0.60–0.76 as in PDF ref
-  // PDF used extreme cases; real faces can have Diamond with FW/CW up to 0.90
-  if (hasFW && hasJW && below(fwR, 0.92) && below(jwR, 0.82)) {
-    // Both FW and JW are clearly narrower than CW
-    const cwDominance = (1 - fwR) + (1 - jwR); // how much CW dominates
-    if (cwDominance > 0.35) {
-      // Strong diamond: CW clearly dominant (e.g. FW/CW=0.68, JW/CW=0.60)
-      scores.diamond += 90;
-    } else if (cwDominance > 0.20 && below(jwR, 0.76)) {
-      // Moderate diamond: still CW widest but less extreme
-      scores.diamond += 75;
-    } else if (cwDominance > 0.12 && below(jwR, 0.82)) {
-      // Mild diamond tendency
-      scores.diamond += 50;
-    }
-  } else if (hasFW && !hasJW && between(fwR, 0.60, 0.88)) {
-    scores.diamond += 40; // FW narrower than CW, no JW data
+  // ════════════════════════════════════════════════════════════════════
+  // STEP 3 — Jawline geometry modifier
+  // ════════════════════════════════════════════════════════════════════
+  if (jawSoft) {
+    score.oval      += 15;
+    score.round     += 10;
+    score.heart     += 8;
+    score.square    -= 10;
+    score.diamond   -= 5;
+    score.triangle  -= 8;
+  }
+  if (jawAngular) {
+    score.square             += 15;
+    score.diamond            += 10;
+    score.triangle           += 8;
+    score.inverted_triangle  += 8;
+    score.oval               -= 8;
+    score.round              -= 10;
+    score.heart              -= 5;
   }
 
-  // ── D: SQUARE — FW/CW ≥ 0.933, JW/CW ≥ 0.933 ───────────────────────
-  // PDF: 128/135 = 0.948 — clearly above Rectangle (124/135 = 0.919)
-  if (between(fwR, 0.933, 1.01) && between(jwR, 0.933, 1.01)) {
-    scores.square += 90;
-    if (simRatio(fwR, jwR)) scores.square += 10;
-  } else if (between(fwR, 0.910, 1.01) && between(jwR, 0.910, 1.01) && ratio < 1.25) {
-    scores.square += 55; // borderline at very low ratio
-  }
-
-  // ── E: RECTANGLE — FW/CW 0.87–0.932, FW≈JW ──────────────────────────
-  // PDF: 124/135 = 0.919 — symmetric widths, lower than Square
-  // Can appear at any ratio (PDF shows 1.33, but real faces can be longer)
-  if (between(fwR, 0.87, 0.932) && between(jwR, 0.87, 0.932) && simRatio(fwR, jwR)) {
-    scores.rectangle += 95;  // symmetric FW≈JW wins over Round
-  } else if (between(fwR, 0.87, 0.932) && between(jwR, 0.87, 0.932)) {
-    scores.rectangle += 65;
-  } else if (ratio >= 1.38 && between(fwR, 0.87, 0.932) && !hasJW) {
-    scores.rectangle += 40;
-  }
-
-  // ── F: ROUND — FW/CW 0.893–0.932, JW/CW 0.83–0.932, ratio < 1.40 ────
-  // PDF: 122/135=0.904, 119/135=0.881 — both below Square/Rect threshold (0.933)
-  // KEY: FW/CW ≥ 0.893 separates from Oblong (max 0.881)
-  if (ratio < 1.40) {
-    if (between(fwR, 0.893, 0.932) && between(jwR, 0.83, 0.932) && !simRatio(fwR,jwR)) {
-      scores.round += 90;  // asymmetric FW>JW = Round
-    } else if (between(fwR, 0.893, 0.932) && between(jwR, 0.83, 0.932) && simRatio(fwR,jwR)) {
-      scores.round += 30;  // symmetric = Rectangle
-    } else if (between(fwR, 0.893, 0.932) && !hasJW && ratio < 1.35) {
-      scores.round += 55;
-    } else if (!hasFW && !hasJW && ratio < 1.28) {
-      scores.round += 65;
-    } else if (!hasFW && !hasJW && ratio < 1.40) {
-      scores.round += 35;
-    }
-  }
-
-  // ── G: OBLONG — FW/CW 0.82–0.892, JW/CW 0.80–0.892 ─────────────────
-  // PDF: 119/135=0.881, 115/135=0.852 — both BELOW Round threshold (0.893)
-  // KEY: FW/CW < 0.893 strictly separates from Round
-  if (between(fwR, 0.82, 0.892) && between(jwR, 0.80, 0.892)) {
-    scores.oblong += 90;
-    if (ratio >= 1.38) scores.oblong += 15;
-  } else if (ratio >= 1.45 && !hasFW && !hasJW) {
-    scores.oblong += 65;
-  } else if (between(fwR, 0.82, 0.892) && !hasJW && ratio >= 1.30) {
-    scores.oblong += 50;
-  }
-
-  // ── H: OVAL — FL>CW>FW>JW gradual taper, no sharp cheekbone peak ─────
-  // Oval: CW moderately wider than FW, FW moderately wider than JW (gradual)
-  // Diamond guard: if CW domination is strong → Diamond wins, not Oval
+  // ════════════════════════════════════════════════════════════════════
+  // STEP 4 — Fine-grained ratio scoring (only when data available)
+  // ════════════════════════════════════════════════════════════════════
   if (hasFW && hasJW) {
-    const cwDom = (1 - fwR) + (1 - jwR);  // total CW dominance
-    if (between(fwR, 0.75, 0.92) && between(jwR, 0.60, 0.82) && fwR > jwR && cwDom < 0.35) {
-      scores.oval += 90; // gradual taper + moderate CW dominance = Oval
-    } else if (between(fwR, 0.75, 0.92) && between(jwR, 0.60, 0.82) && cwDom < 0.45) {
-      scores.oval += 55; // possible Oval but Diamond may score higher
+    const cwDom = (1 - fwR) + (1 - jwR);  // how much CW dominates both
+
+    // ── Diamond: CW clearly widest, both FW and JW narrow ────────────
+    if (widestPart === 'cw' && fwR < 0.82 && jwR < 0.82) {
+      const diamondSignal = cwDom;
+      score.diamond += Math.round(diamondSignal * 40);
+      score.oval    -= Math.round(diamondSignal * 15);
     }
-  } else if (between(fwR, 0.78, 0.92) && !hasJW && between(ratio, 1.25, 1.55)) {
-    scores.oval += 55;
-  } else if (!hasFW && !hasJW && between(ratio, 1.28, 1.48)) {
-    scores.oval += 45;
+
+    // ── Oval: gradual taper CW > FW > JW, CW not dominant ────────────
+    if (widestPart === 'cw' && fwR > jwR && cwDom < 0.35 && fwR > 0.75) {
+      score.oval += 25;
+    }
+
+    // ── Balance check: CW ≈ JW → NOT Triangle ────────────────────────
+    if (widestPart === 'cw' && hasJW && Math.abs(cw - jw) < 1.0) {
+      score.oval     += 15;
+      score.triangle -= 20;  // key fix: balanced widths ≠ triangle
+    }
+
+    // ── Square: all widths similar AND angular ────────────────────────
+    if (fwR > 0.90 && jwR > 0.90 && Math.abs(fwR - jwR) < 0.05) {
+      score.square    += jawAngular ? 30 : 15;
+      score.rectangle += 10;
+    }
+
+    // ── Rectangle: all widths similar, long face ─────────────────────
+    if (fwR > 0.87 && jwR > 0.87 && ratio > 1.38) {
+      score.rectangle += 20;
+      score.oblong    += 10;
+    }
+
+    // ── Round: high FW and JW relative to CW, short face ─────────────
+    if (fwR > 0.88 && jwR > 0.83 && ratio < 1.40 && fwR > jwR) {
+      score.round += 25;
+    }
+
+    // ── Heart: FW clearly dominates, JW narrow, soft jaw ─────────────
+    if (widestPart === 'fw' && jwR < 0.76) {
+      score.heart += jawSoft ? 25 : 10;
+      score.inverted_triangle += jawAngular ? 20 : 5;
+    }
+
+    // ── Triangle STRICT guard: jaw must exceed cheekbone ─────────────
+    // This is the core fix — triangle REQUIRES jw > cw
+    if (widestPart !== 'jw') {
+      score.triangle -= 25;  // strong suppression if jaw isn't actually widest
+      score.pear     -= 20;
+    } else if (widestPart === 'jw') {
+      const jawExcess = (jw - cw) / cw;
+      if (jawExcess > 0.08 && fwR < 0.70) {
+        score.pear     += 20;  // very wide jaw + very narrow forehead = pear
+        score.triangle += 10;
+      } else if (jawExcess > 0.03 && fwR < 0.82) {
+        score.triangle += 20;
+      } else if (jawExcess > 0 && fwR >= 0.82) {
+        score.square += 15;   // wide jaw but wide forehead too = square
+        score.triangle -= 10;
+      }
+    }
+  } else if (hasFW && !hasJW) {
+    // Only FW available
+    if (widestPart === 'fw' && fwR > 0.93) {
+      score.heart += 20;
+      score.inverted_triangle += 15;
+    }
+    if (widestPart === 'cw' && fwR < 0.78) {
+      score.diamond += 20;
+    }
+    if (fwR > 0.90 && ratio < 1.35) {
+      score.square += 15;
+      score.round  += 10;
+    }
+  } else if (!hasFW && hasJW) {
+    // Only JW available
+    if (widestPart === 'jw') {
+      score.triangle += 15;
+      score.pear     += jwR > 1.05 ? 15 : 5;
+    }
+    if (jwR < 0.70 && ratio > 1.35) {
+      score.diamond += 15;
+    }
+  } else {
+    // No FW or JW — FL/CW ratio + jaw type only
+    if (ratio < 1.28 && jawSoft)    score.round  += 20;
+    if (ratio < 1.28 && jawAngular) score.square += 20;
+    if (ratio > 1.45)               score.oblong += 20;
+    if (ratio >= 1.28 && ratio <= 1.48) score.oval += 20;
   }
 
-  // ── Tiebreakers ───────────────────────────────────────────────────────
-  if (ratio >= 1.55)  { scores.oblong += 20; scores.rectangle += 15; }
-  if (ratio >= 1.70)  { scores.oblong += 20; scores.rectangle += 10; }
-  if (ratio < 1.20)   { scores.round  += 20; }
-  // Oblong and Rectangle get bonus at long ratios
-  if (ratio >= 1.38 && scores.oblong > 0)    scores.oblong    += 10;
-  if (ratio >= 1.38 && scores.rectangle > 0) scores.rectangle += 10;
+  // ════════════════════════════════════════════════════════════════════
+  // STEP 5 — Chin width modifier (ChW/JW)
+  // ════════════════════════════════════════════════════════════════════
+  if (chw > 0 && jw > 0) {
+    const chwJw = chw / jw;
+    if (chwJw < 0.35) {
+      // Pointed chin → Heart, Diamond, Oval
+      score.heart   += 10;
+      score.diamond += 8;
+      score.triangle -= 5;
+      score.square  -= 10;
+    } else if (chwJw > 0.55) {
+      // Wide rounded chin → Round, Square
+      score.round  += 10;
+      score.square += 8;
+    }
+  }
 
-  Object.keys(scores).forEach(k => { if (scores[k] < 0) scores[k] = 0; });
+  // ════════════════════════════════════════════════════════════════════
+  // STEP 6 — Clamp negatives and rank
+  // ════════════════════════════════════════════════════════════════════
+  Object.keys(score).forEach(k => { if (score[k] < 0) score[k] = 0; });
 
-  const ranked      = Object.entries(scores).sort((a,b) => b[1]-a[1]);
+  const ranked      = Object.entries(score).sort((a, b) => b[1] - a[1]);
   const primaryKey  = ranked[0][0];
   const secondaryKey= ranked[1][0];
-  const primaryShape= FACE_SHAPE_DB[primaryKey];
-  const confidence  = Math.min(96, Math.max(40, Math.round(ranked[0][1] * 0.85)));
+  const primaryShape= FACE_SHAPE_DB[primaryKey] || FACE_SHAPE_DB['oval'];
 
-  // ── Rank display ──────────────────────────────────────────────────────
+  // Confidence: how far ahead is #1 vs #2?
+  const top1 = ranked[0][1];
+  const top2 = ranked[1][1];
+  const totalPoints = ranked.reduce((s, [, v]) => s + v, 0) || 1;
+  const separationBonus = Math.min(25, Math.round(((top1 - top2) / (totalPoints)) * 100));
+  const rawConf = Math.round((top1 / totalPoints) * 100) + separationBonus;
+  const confidence = Math.min(95, Math.max(42, rawConf));
+
+  // ── Rank display ──────────────────────────────────────────────────
   const measureList = [
-    {lbl:'FL', val:fl}, {lbl:'CW', val:cw},
-    ...(fw>0 ? [{lbl:'FW', val:fw}] : []),
-    ...(jw>0 ? [{lbl:'JW', val:jw}] : []),
-  ].sort((a,b) => b.val - a.val);
-  const rankEl = document.getElementById('far-rank-items');
+    { lbl: 'FL', val: fl },
+    { lbl: 'CW', val: cw },
+    ...(fw > 0 ? [{ lbl: 'FW', val: fw }] : []),
+    ...(jw > 0 ? [{ lbl: 'JW', val: jw }] : []),
+  ].sort((a, b) => b.val - a.val);
+
+  const rankEl = document.getElementById('far-rank-breakdown');
   if (rankEl) {
-    let html = measureList.map((mv,i) =>
-      `<span style="background:${i===0?'var(--gold)':'rgba(255,255,255,.15)'};color:${i===0?'var(--wine)':'#FAF7F2'};padding:3px 10px;border-radius:12px;font-family:'DM Mono',monospace;font-weight:${i===0?700:400}">${mv.lbl}: ${mv.val.toFixed(1)}</span>${i<measureList.length-1?'<span style="color:rgba(250,247,242,.4)"> › </span>':''}`
-    ).join('');
     const ratioInfo = [];
-    if (hasFW) ratioInfo.push(`FW/CW: ${(fw/cw).toFixed(2)}`);
-    if (hasJW) ratioInfo.push(`JW/CW: ${(jw/cw).toFixed(2)}`);
-    if (ratioInfo.length) {
-      html += `<span style="color:rgba(250,247,242,.3);margin:0 8px">|</span><span style="font-size:10px;color:rgba(250,247,242,.55);font-family:'DM Mono',monospace">${ratioInfo.join('  ·  ')}</span>`;
-    }
-    rankEl.innerHTML = html;
+    if (hasFW) ratioInfo.push(`FW/CW: ${(fw / cw).toFixed(2)}`);
+    if (hasJW) ratioInfo.push(`JW/CW: ${(jw / cw).toFixed(2)}`);
+    ratioInfo.push(`FL/CW: ${ratio.toFixed(2)}`);
+    ratioInfo.push(`widest: ${widestPart.toUpperCase()}`);
+    if (window._lastJawType) ratioInfo.push(`jaw: ${window._lastJawType}`);
+    rankEl.innerHTML = [
+      measureList.map(mv => `${mv.lbl}: ${mv.val.toFixed(1)}`).join(' › '),
+      ratioInfo.join('  ·  ')
+    ].join('\n');
   }
 
-  // ── Populate result panel ─────────────────────────────────────────────
+  // ── Populate result panel ─────────────────────────────────────────
   panel.classList.add('show');
   const ring = document.getElementById('far-ring-circle');
-  if (ring) ring.style.strokeDashoffset = 150.8 - (confidence/100)*150.8;
+  if (ring) ring.style.strokeDashoffset = 150.8 - (confidence / 100) * 150.8;
   document.getElementById('far-conf-pct').textContent = confidence + '%';
   document.getElementById('far-shape-th').textContent = primaryShape.th;
   document.getElementById('far-shape-en').textContent = primaryShape.en;
+
   const secEl = document.getElementById('far-secondary');
   if (secEl && secondaryKey !== primaryKey && ranked[1][1] > 0) {
     secEl.textContent = FACE_SHAPE_DB[secondaryKey]?.en || secondaryKey;
@@ -2225,25 +2305,23 @@ function calcFaceAutoDetect() {
   } else if (secEl) {
     document.getElementById('far-secondary-wrap').style.display = 'none';
   }
+
   document.getElementById('far-ratio').textContent  = ratio.toFixed(2);
   document.getElementById('far-golden').textContent = goldenScore + '/100';
-  document.getElementById('far-fw-cw').textContent  = hasFW ? (fw/cw).toFixed(2) : '—';
-  document.getElementById('far-jw-cw').textContent  = hasJW ? (jw/cw).toFixed(2) : '—';
-  // New ratio displays
-  const twVal  = parseFloat(document.getElementById('f_tw')?.value)  || 0;
-  const chwVal = parseFloat(document.getElementById('f_chw')?.value) || 0;
-  const jwVal2 = jw;
+  document.getElementById('far-fw-cw').textContent  = hasFW ? (fw / cw).toFixed(2) : '—';
+  document.getElementById('far-jw-cw').textContent  = hasJW ? (jw / cw).toFixed(2) : '—';
+
   const twCwEl  = document.getElementById('far-tw-cw');
   const chwJwEl = document.getElementById('far-chw-jw');
-  if (twCwEl)  twCwEl.textContent  = (twVal > 0 && cw > 0) ? (twVal/cw).toFixed(2) : '—';
-  if (chwJwEl) chwJwEl.textContent = (chwVal > 0 && jwVal2 > 0) ? (chwVal/jwVal2).toFixed(2) : '—';
+  if (twCwEl)  twCwEl.textContent  = (tw > 0 && cw > 0) ? (tw / cw).toFixed(2) : '—';
+  if (chwJwEl) chwJwEl.textContent = (chw > 0 && jw > 0) ? (chw / jw).toFixed(2) : '—';
 
-  // ── Thirds ────────────────────────────────────────────────────────────
+  // ── Thirds ────────────────────────────────────────────────────────
   const totalT = u + m + l;
   const thirds = document.getElementById('far-thirds-grid');
   if (thirds && totalT > 0) {
-    const pcts = [u/totalT*100, m/totalT*100, l/totalT*100];
-    thirds.innerHTML = ['U (หน้าผาก)','M (กลาง)','L (คาง)'].map((z,i) => {
+    const pcts = [u / totalT * 100, m / totalT * 100, l / totalT * 100];
+    thirds.innerHTML = ['U (หน้าผาก)', 'M (กลาง)', 'L (คาง)'].map((z, i) => {
       const p   = pcts[i];
       const cls = p > 35 ? 'dominant' : p < 30 ? 'deficit' : '';
       const lbl = p > 35 ? 'ยาวเด่น · Dominant' : p < 30 ? 'สั้น · Deficit' : 'สมดุล ✓';
@@ -2259,19 +2337,15 @@ function calcFaceAutoDetect() {
   if (vibeEl) { vibeEl.textContent = primaryShape.vibe; vibeEl.style.display = 'inline-block'; }
 
   updateFaceMetricsFromAuto(primaryKey, ratio, confidence);
-  drawFaceDiagram(primaryKey, primaryShape.curveScore > 0 ? primaryShape.curveScore/3 : 0.3, 0.5);
+  drawFaceDiagram(primaryKey, primaryShape.curveScore > 0 ? primaryShape.curveScore / 3 : 0.3, 0.5);
   const lbl2 = document.getElementById('faceIdentityLabel');
   if (lbl2) lbl2.textContent = primaryShape.en;
-  window._faceVibeXY    = FACE_SHAPE_CURVE_MAP[primaryKey] || { x:0.5, y:0.5 };
+  window._faceVibeXY    = FACE_SHAPE_CURVE_MAP[primaryKey] || { x: 0.5, y: 0.5 };
   window._detectedShape = primaryKey;
 
-  // ── Build Face DNA Tags from all measurements ──────────────────
-  const tw  = parseFloat(document.getElementById('f_tw')?.value)  || 0;
-  const chw = parseFloat(document.getElementById('f_chw')?.value) || 0;
-  const ss  = parseFloat(document.getElementById('f_ss')?.value)  || 0;
-  const sm  = parseFloat(document.getElementById('f_sm')?.value)  || 0;
-  const jawT= document.querySelector('#jawType .toggle-btn.active')?.dataset.val || '';
-  const dna = buildFaceDNA(fl, cw, fw, tw, jw, chw, ss, sm, u, m, l, jawT, primaryKey);
+  // ── Build Face DNA Tags ────────────────────────────────────────────
+  const jawT = document.querySelector('#jawType .toggle-btn.active')?.dataset.val || '';
+  const dna = buildFaceDNA(fl, cw, fw, tw, jw, chw, 0, 0, u, m, l, jawT, primaryKey);
   renderFaceDNAPanel(dna);
   window._faceDNA = dna;
 }
